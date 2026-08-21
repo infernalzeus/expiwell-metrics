@@ -1,0 +1,14 @@
+{
+  "_comment": "Overrides the built-in schedule. Pass with --schedule. Only the keys you list are changed; everything else keeps its default. 'type' is one of signal | interval | event | exclude. 'scored' decides whether the survey counts toward the overall verdict.",
+  "expected_days": 15,
+  "surveys": {
+    "Affect":                       { "type": "signal",   "prompts_per_day": 2, "scored": true },
+    "PSRS-Affect":                  { "type": "signal",   "prompts_per_day": 1, "scored": true },
+    "Cognitron":                    { "type": "signal",   "prompts_per_day": 1, "scored": true },
+    "Sleep-Diary":                  { "type": "interval", "prompts_per_day": 1, "scored": true },
+    "Emotional-Events-Diary":       { "type": "interval", "prompts_per_day": 1, "scored": false },
+    "Morning-Passive-Saliva-Drool": { "type": "event", "prompts_per_day": 1, "on_days": [1, 5, 12], "scored": false },
+    "Evening-Passive-Saliva-Drool": { "type": "event", "prompts_per_day": 1, "on_days": [1, 5, 12], "scored": false },
+    "Test-Notification":            { "type": "exclude", "scored": false }
+  }
+}

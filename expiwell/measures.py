@@ -306,3 +306,62 @@ def sleep_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
             out[f"{key}_mean"] = st["mean"]
             out[f"{key}_sd"] = st["sd"]
     return out
+
+
+# ---------------------------------------------------------------------------
+# 3. Affect composites (PANAS-style valence split)
+# ---------------------------------------------------------------------------
+#: The CHiP-D affect grid mixes pleasant and unpleasant adjectives on one 1-7
+#: scale. Averaging them together would cancel out, so they are scored as two
+#: composites and always reported as a pair.
+POSITIVE_ITEMS = {"satisfied", "relaxed", "cheerful", "energetic",
+                  "enthusiastic", "calm"}
+NEGATIVE_ITEMS = {"upset", "irritated", "listless", "down", "nervous",
+                  "bored", "anxious"}
+
+
+def _valence(item: str) -> Optional[str]:
+    key = clean_text(item).casefold()
+    head = re.split(r"[ (]", key)[0]
+    if head in POSITIVE_ITEMS:
+        return "positive"
+    if head in NEGATIVE_ITEMS:
+        return "negative"
+    return None
+
+
+def affect_composites(surveys: list) -> list[dict[str, Any]]:
+    """Per response: mean positive affect and mean negative affect (1-7)."""
+    rows: list[dict[str, Any]] = []
+    for s in surveys:
+        if "affect" not in s.name.casefold() or "test" in s.name.casefold():
+            continue
+        vmap = s.value_map()
+        for r in s.responses:
+            if not r.completed:
+                continue
+            pos, neg = [], []
+            for q in s.questions:
+                val = _numeric_for(q, vmap, r.answers.get(q["column"]))
+                if val is None:
+                    continue
+                v = _valence(short_item(q.get("text", "")))
+                if v == "positive":
+                    pos.append(val)
+                elif v == "negative":
+                    neg.append(val)
+            if not pos and not neg:
+                continue
+            rows.append({
+                "participant": s.participant, "survey": s.name,
+                "day": r.day, "occasion": r.occasion,
+                "positive_affect": round(statistics.fmean(pos), 3) if pos else None,
+                "negative_affect": round(statistics.fmean(neg), 3) if neg else None,
+                "n_positive_items": len(pos), "n_negative_items": len(neg),
+            })
+    return rows
+
+
+def item_valences(items: list[dict[str, Any]]) -> dict[str, Optional[str]]:
+    """item label -> 'positive' / 'negative' / None, for colouring the profile."""
+    return {r["item"]: _valence(r["item"]) for r in items}

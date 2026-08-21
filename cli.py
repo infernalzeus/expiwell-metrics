@@ -194,16 +194,18 @@ def main(argv: list[str] | None = None) -> int:
     series = meas_mod.item_series(surveys)
     sleep_rows = meas_mod.sleep_metrics(surveys)
     sleep_sum = meas_mod.sleep_summary(sleep_rows)
+    affect_rows = meas_mod.affect_composites(surveys)
     _write_csv(out / f"{stem}_expiwell_item_measures.csv", items)
     _write_csv(out / f"{stem}_expiwell_item_series.csv", series)
     _write_csv(out / f"{stem}_expiwell_sleep_metrics.csv", sleep_rows)
+    _write_csv(out / f"{stem}_expiwell_affect.csv", affect_rows)
     result["measures"] = {"items": items, "sleep_summary": sleep_sum}
 
     if not args.no_report:
         try:
             report_mod.build_report(out / f"{stem}_expiwell_report.pdf", surveys,
                                     items, series, sleep_rows, sleep_sum,
-                                    participant, args.season)
+                                    affect_rows, result, participant, args.season)
         except Exception as exc:  # a failed plot must not lose the data outputs
             print(f"WARNING: report generation failed: {exc}", file=sys.stderr)
 

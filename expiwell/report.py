@@ -1,12 +1,15 @@
-"""Multi-page PDF report for an ExpiWell participant/season.
+"""Multi-page PDF reporting the measures the participant actually reported.
+
+This is a *measures* report, not a compliance report: it shows what was answered
+— item means, how each measure moved across the study, and the derived sleep
+metrics — rather than how many prompts were completed.
 
 Pages
 -----
-1. Summary — verdict, overall response rate, per-survey table, review notes.
-2. Response calendar — survey x study-day grid (complete / partial / missed /
-   not scheduled), which makes drop-off and missed protocol days obvious.
-3. Timing — response latency after the prompt window opened (signal-contingent
-   surveys) and completion-duration distribution.
+1. Overview — participant/season, the surveys found, and the sleep summary.
+2. Per survey: the item profile (mean +- SD per item, on the item's own scale).
+3. Per survey: the time course of each item across the study days.
+4. Sleep diary: night-by-night TST / SOL / WASO / SE and a summary table.
 """
 from __future__ import annotations
 
@@ -18,161 +21,195 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.backends.backend_pdf import PdfPages  # noqa: E402
-from matplotlib.patches import Patch  # noqa: E402
 
-# complete / partial / missed / not-scheduled
-_COLORS = {"complete": "#22c55e", "partial": "#f59e0b", "missed": "#ef4444", "na": "#e5e7eb"}
-_VERDICT_COLOR = {"PASS": "#15803d", "REVIEW": "#b45309", "FAIL": "#b91c1c", "ERROR": "#6b7280"}
+from .measures import clean_text  # noqa: E402
+
+ACCENT = "#0B2C91"
+ACCENT2 = "#4f8cff"
+GRID = "#dfe3ec"
 
 
-def _fig(title: str):
+def _fig(title: str, subtitle: str = ""):
+    title, subtitle = clean_text(title), clean_text(subtitle)
     fig = plt.figure(figsize=(11.69, 8.27))  # A4 landscape
     fig.suptitle(title, fontsize=14, fontweight="bold", x=0.02, ha="left")
+    if subtitle:
+        fig.text(0.02, 0.935, subtitle, fontsize=9.5, color="#555", ha="left")
     return fig
 
 
-def _summary_page(pdf, result: dict[str, Any], participant: str, season: str) -> None:
-    s = result["summary"]
-    fig = _fig(f"ExpiWell compliance — {participant}" + (f" · {season}" if season else ""))
-    ax = fig.add_axes([0.02, 0.06, 0.96, 0.84])
-    ax.axis("off")
+def _table(ax, rows, cols, bbox, fontsize=8.2):
+    rows = [[clean_text(str(c)) for c in row] for row in rows]
+    cols = [clean_text(str(c)) for c in cols]
+    tbl = ax.table(cellText=rows, colLabels=cols, cellLoc="center",
+                   loc="upper left", bbox=bbox)
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(fontsize)
+    for (r, _c), cell in tbl.get_celld().items():
+        cell.set_edgecolor(GRID)
+        if r == 0:
+            cell.set_facecolor("#eef1f7")
+            cell.set_text_props(fontweight="bold")
+    return tbl
 
-    verdict = result["verdict"]
-    ax.text(0, 1.0, verdict, fontsize=30, fontweight="bold",
-            color=_VERDICT_COLOR.get(verdict, "#333"), va="top")
-    ax.text(0.16, 1.0,
-            f"overall response rate  {s['overall_response_rate_pct']:.1f}%\n"
-            f"{s['total_completed']} of {s['total_expected']} scheduled prompts completed"
-            f"   ·   {s['total_missed']} missed\n"
-            f"study length {s['expected_days']} days   ·   pass mark "
-            f"{s['min_response_rate_pct']:.0f}%",
-            fontsize=11, va="top")
 
+def _overview_page(pdf, participant, season, surveys, items, sleep_sum):
+    fig = _fig(f"ExpiWell measures - {participant}" + (f" · {season}" if season else ""),
+               "What was reported, per survey and per item")
+    ax = fig.add_axes([0.02, 0.06, 0.96, 0.86]); ax.axis("off")
+
+    by_survey: dict[str, int] = {}
+    for it in items:
+        by_survey[it["survey"]] = by_survey.get(it["survey"], 0) + 1
     rows = []
-    for p in result["per_survey"]:
-        rate = p.get("response_rate_pct")
-        rows.append([
-            p.get("survey", "")[:30],
-            p.get("type", ""),
-            "yes" if p.get("scored") else "—",
-            str(p.get("expected") or "—"),
-            str(p.get("completed") or 0),
-            f"{rate:.0f}%" if rate is not None else "—",
-            f"{p['median_latency_min']:.0f}" if p.get("median_latency_min") is not None else "—",
-            f"{p['pct_within_window']:.0f}%" if p.get("pct_within_window") is not None else "—",
-            f"{p['median_duration_sec']:.0f}" if p.get("median_duration_sec") is not None else "—",
-        ])
+    for s in surveys:
+        n_resp = len([r for r in s.responses if r.completed])
+        rows.append([clean_text(s.name)[:34], str(n_resp), str(len(s.questions)),
+                     str(by_survey.get(s.name, 0))])
     if rows:
-        tbl = ax.table(
-            cellText=rows,
-            colLabels=["survey", "type", "scored", "expected", "done", "rate",
-                       "median latency (min)", "in window", "median dur (s)"],
-            cellLoc="center", loc="upper left", bbox=[0, 0.30, 1, 0.52],
-        )
-        tbl.auto_set_font_size(False)
-        tbl.set_fontsize(8.5)
-        for (r, _c), cell in tbl.get_celld().items():
-            cell.set_edgecolor("#d1d5db")
-            if r == 0:
-                cell.set_facecolor("#f3f4f6")
-                cell.set_text_props(fontweight="bold")
+        _table(ax, rows, ["survey", "responses", "questions", "numeric measures"],
+               [0, 0.52, 0.55, 0.42])
 
-    notes = result.get("notes") or []
-    if notes:
-        ax.text(0, 0.24, "Review notes", fontsize=11, fontweight="bold", va="top")
-        ax.text(0, 0.20, "\n".join(f"• {n}" for n in notes), fontsize=8.5,
-                va="top", wrap=True, color="#7c2d12")
-    pdf.savefig(fig)
-    plt.close(fig)
+    if sleep_sum:
+        ax.text(0.60, 0.94, "Sleep diary summary", fontsize=11,
+                fontweight="bold", va="top")
+        pretty = {
+            "nights": "nights recorded",
+            "TST_hours_mean": "total sleep time (h)", "SOL_min_mean": "sleep onset latency (min)",
+            "WASO_min_mean": "wake after sleep onset (min)", "SE_pct_mean": "sleep efficiency (%)",
+            "TIB_min_mean": "time in bed (min)", "n_awakenings_mean": "awakenings per night",
+            "quality_mean": "sleep quality", "restedness_mean": "restedness",
+        }
+        srows = []
+        for key, label in pretty.items():
+            if key in sleep_sum:
+                sd = sleep_sum.get(key.replace("_mean", "_sd"))
+                val = sleep_sum[key]
+                srows.append([label, f"{val:g}" + (f"  (SD {sd:g})" if sd else "")])
+        if srows:
+            _table(ax, srows, ["measure", "mean"], [0.60, 0.30, 0.40, 0.58])
+    pdf.savefig(fig); plt.close(fig)
 
 
-def _calendar_page(pdf, result: dict[str, Any]) -> None:
-    surveys = [p for p in result["per_survey"] if p.get("per_day")]
-    if not surveys:
-        return
-    max_day = max((d["day"] for p in surveys for d in p["per_day"]), default=0)
-    if not max_day:
-        return
+def _item_profile_page(pdf, survey_name, rows, participant):
+    """Mean +- SD for every numeric item in one survey."""
+    rows = sorted(rows, key=lambda r: r["item"])
+    labels = [clean_text(r["item"]) for r in rows]
+    means = [r["mean"] for r in rows]
+    sds = [r["sd"] or 0 for r in rows]
+    lo = min((r["scale_min"] for r in rows if isinstance(r["scale_min"], (int, float))), default=None)
+    hi = max((r["scale_max"] for r in rows if isinstance(r["scale_max"], (int, float))), default=None)
 
-    fig = _fig("Response calendar — did each scheduled prompt get completed?")
-    ax = fig.add_axes([0.20, 0.12, 0.76, 0.76])
-    for row, p in enumerate(surveys):
-        by_day = {d["day"]: d for d in p["per_day"]}
-        for day in range(1, max_day + 1):
-            d = by_day.get(day)
-            if d is None:
-                color = _COLORS["na"]
-            elif d["completed"] >= d["expected"] and d["expected"]:
-                color = _COLORS["complete"]
-            elif d["completed"] > 0:
-                color = _COLORS["partial"]
-            else:
-                color = _COLORS["missed"]
-            ax.add_patch(plt.Rectangle((day - 0.5, row - 0.5), 1, 1,
-                                       facecolor=color, edgecolor="white", linewidth=1.2))
-    ax.set_xlim(0.5, max_day + 0.5)
-    ax.set_ylim(-0.5, len(surveys) - 0.5)
+    height = max(3.2, 0.32 * len(labels) + 1.6)
+    survey_name = clean_text(survey_name)
+    fig = _fig(f"{survey_name} - item profile",
+               f"{participant} · mean response per item, error bars = SD")
+    ax = fig.add_axes([0.34, 0.10, 0.62, 0.80])
+    y = range(len(labels))
+    ax.barh(list(y), means, xerr=sds, color=ACCENT2, edgecolor=ACCENT,
+            error_kw={"ecolor": "#8b94a7", "elinewidth": 1}, height=0.62)
+    ax.set_yticks(list(y)); ax.set_yticklabels(labels, fontsize=8)
     ax.invert_yaxis()
-    ax.set_yticks(range(len(surveys)))
-    ax.set_yticklabels([f"{p['survey'][:28]}  ({p.get('type','')})" for p in surveys], fontsize=8.5)
-    ax.set_xticks(range(1, max_day + 1))
-    ax.set_xlabel("Day of study")
-    ax.tick_params(length=0)
-    for side in ("top", "right", "left", "bottom"):
+    if lo is not None and hi is not None:
+        ax.set_xlim(lo - 0.2, hi + 0.2)
+        ax.set_xlabel(f"response ({lo:g} - {hi:g} scale)")
+    else:
+        ax.set_xlabel("response")
+    ax.grid(axis="x", alpha=0.3)
+    for side in ("top", "right"):
         ax.spines[side].set_visible(False)
-    ax.legend(
-        handles=[Patch(facecolor=_COLORS[k], label=lab) for k, lab in
-                 [("complete", "all prompts done"), ("partial", "some done"),
-                  ("missed", "none done"), ("na", "not scheduled")]],
-        loc="upper center", bbox_to_anchor=(0.5, -0.10), ncol=4, frameon=False, fontsize=9,
-    )
-    pdf.savefig(fig)
-    plt.close(fig)
+    pdf.savefig(fig); plt.close(fig)
 
 
-def _timing_page(pdf, surveys: list, result: dict[str, Any]) -> None:
-    by_name = {s.name: s for s in surveys}
-    lat_sets, lat_labels, durations = [], [], []
-    for p in result["per_survey"]:
-        s = by_name.get(p.get("survey"))
-        if not s:
-            continue
-        lats = [r.latency_minutes for r in s.responses
-                if r.completed and r.latency_minutes is not None]
-        if lats and p.get("type") == "signal":
-            lat_sets.append(lats)
-            lat_labels.append(p["survey"][:20])
-        durations += [r.duration_sec for r in s.responses
-                      if r.completed and r.duration_sec is not None]
-    if not lat_sets and not durations:
+def _item_timecourse_page(pdf, survey_name, series, participant, max_items=8):
+    """How each item moved across the study."""
+    by_item: dict[str, list] = {}
+    for r in series:
+        by_item.setdefault(r["item"], []).append(r)
+    # Busiest items first so the page shows the best-covered measures.
+    items = sorted(by_item, key=lambda k: -len(by_item[k]))[:max_items]
+    if not items:
         return
-
-    fig = _fig("Response timing")
-    if lat_sets:
-        ax1 = fig.add_axes([0.08, 0.55, 0.86, 0.33])
-        ax1.boxplot(lat_sets, labels=lat_labels, vert=False, widths=0.6)
-        ax1.set_xlabel("minutes after the prompt window opened")
-        ax1.set_title("Notification response latency (signal-contingent surveys)",
-                      fontsize=10, loc="left")
-        ax1.grid(axis="x", alpha=0.3)
-    if durations:
-        ax2 = fig.add_axes([0.08, 0.10, 0.86, 0.33])
-        ax2.hist(durations, bins=min(30, max(5, len(durations) // 2)),
-                 color="#4f8cff", edgecolor="white")
-        ax2.set_xlabel("completion duration (seconds)")
-        ax2.set_ylabel("responses")
-        ax2.set_title("How long each response took", fontsize=10, loc="left")
-        ax2.grid(axis="y", alpha=0.3)
-    pdf.savefig(fig)
-    plt.close(fig)
+    fig = _fig(f"{survey_name} - measures over the study",
+               f"{participant} · each point is one completed response")
+    ax = fig.add_axes([0.08, 0.10, 0.72, 0.80])
+    cmap = plt.get_cmap("tab10")
+    for i, item in enumerate(items):
+        pts = sorted(by_item[item], key=lambda r: (r["day"] or 0, r["occasion"] or 0))
+        xs = [p["day"] for p in pts if p["day"] is not None]
+        ys = [p["value"] for p in pts if p["day"] is not None]
+        if not xs:
+            continue
+        ax.plot(xs, ys, marker="o", ms=3.5, lw=1.3, color=cmap(i % 10), label=clean_text(item)[:30])
+    ax.set_xlabel("day of study"); ax.set_ylabel("response")
+    ax.grid(alpha=0.3)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    ax.legend(loc="upper left", bbox_to_anchor=(1.01, 1.0), fontsize=8, frameon=False)
+    pdf.savefig(fig); plt.close(fig)
 
 
-def build_report(out_pdf: Path, result: dict[str, Any], surveys: list,
-                 participant: str, season: str = "") -> Path:
+def _sleep_pages(pdf, sleep_rows, participant):
+    if not sleep_rows:
+        return
+    rows = sorted(sleep_rows, key=lambda r: (r["day"] or 0))
+    days = [r["day"] for r in rows]
+
+    fig = _fig("Sleep diary - night by night", f"{participant} · derived from the Consensus Sleep Diary")
+    ax1 = fig.add_axes([0.08, 0.56, 0.86, 0.34])
+    tst = [r["TST_hours"] for r in rows]
+    ax1.plot(days, tst, marker="o", color=ACCENT, lw=1.6)
+    ax1.set_ylabel("total sleep time (h)"); ax1.grid(alpha=0.3)
+    ax1.set_title("Total sleep time", fontsize=10, loc="left")
+    for side in ("top", "right"):
+        ax1.spines[side].set_visible(False)
+
+    ax2 = fig.add_axes([0.08, 0.10, 0.86, 0.34])
+    width = 0.38
+    xs = list(range(len(days)))
+    ax2.bar([x - width / 2 for x in xs], [r["SOL_min"] or 0 for r in rows],
+            width=width, label="sleep onset latency (min)", color=ACCENT2)
+    ax2.bar([x + width / 2 for x in xs], [r["WASO_min"] or 0 for r in rows],
+            width=width, label="wake after sleep onset (min)", color="#f59e0b")
+    ax2.set_xticks(xs); ax2.set_xticklabels([str(d) for d in days], fontsize=8)
+    ax2.set_xlabel("day of study"); ax2.set_ylabel("minutes")
+    ax2.legend(frameon=False, fontsize=8.5); ax2.grid(axis="y", alpha=0.3)
+    for side in ("top", "right"):
+        ax2.spines[side].set_visible(False)
+    pdf.savefig(fig); plt.close(fig)
+
+    # Night table
+    fig = _fig("Sleep diary - nightly values", participant)
+    ax = fig.add_axes([0.02, 0.05, 0.96, 0.86]); ax.axis("off")
+    cols = ["day", "into bed", "lights out", "final wake", "out of bed",
+            "SOL", "WASO", "wakes", "TST (h)", "SE %"]
+    body = [[str(r["day"]), r["into_bed"], r["lights_out"], r["final_wake"],
+             r["out_of_bed"],
+             "" if r["SOL_min"] is None else f'{r["SOL_min"]:g}',
+             "" if r["WASO_min"] is None else f'{r["WASO_min"]:g}',
+             "" if r["n_awakenings"] is None else f'{r["n_awakenings"]:g}',
+             "" if r["TST_hours"] is None else f'{r["TST_hours"]:g}',
+             "" if r["SE_pct"] is None else f'{r["SE_pct"]:g}'] for r in rows]
+    _table(ax, body, cols, [0, max(0.05, 0.92 - 0.035 * len(body)), 1, min(0.92, 0.035 * len(body) + 0.05)])
+    pdf.savefig(fig); plt.close(fig)
+
+
+def build_report(out_pdf: Path, surveys: list, items: list, series: list,
+                 sleep_rows: list, sleep_sum: dict, participant: str,
+                 season: str = "") -> Path:
     out_pdf = Path(out_pdf)
     out_pdf.parent.mkdir(parents=True, exist_ok=True)
+    by_survey_items: dict[str, list] = {}
+    for r in items:
+        by_survey_items.setdefault(r["survey"], []).append(r)
+    by_survey_series: dict[str, list] = {}
+    for r in series:
+        by_survey_series.setdefault(r["survey"], []).append(r)
+
     with PdfPages(out_pdf) as pdf:
-        _summary_page(pdf, result, participant, season)
-        _calendar_page(pdf, result)
-        _timing_page(pdf, surveys, result)
+        _overview_page(pdf, participant, season, surveys, items, sleep_sum)
+        for name in sorted(by_survey_items):
+            _item_profile_page(pdf, name, by_survey_items[name], participant)
+            _item_timecourse_page(pdf, name, by_survey_series.get(name, []), participant)
+        _sleep_pages(pdf, sleep_rows, participant)
     return out_pdf

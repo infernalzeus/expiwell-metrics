@@ -31,6 +31,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from expiwell import compliance as comp_mod  # noqa: E402
+from expiwell import measures as meas_mod  # noqa: E402
 from expiwell import parser as parser_mod  # noqa: E402
 from expiwell import report as report_mod  # noqa: E402
 from expiwell import schedule as schedule_mod  # noqa: E402
@@ -188,17 +189,31 @@ def main(argv: list[str] | None = None) -> int:
     _write_csv(out / f"{stem}_expiwell_responses.csv", _response_rows(surveys))
     _write_csv(out / f"{stem}_expiwell_questions.csv", _question_rows(surveys))
 
+    # --- the substantive outputs: what was actually reported ---------------
+    items = meas_mod.item_measures(surveys)
+    series = meas_mod.item_series(surveys)
+    sleep_rows = meas_mod.sleep_metrics(surveys)
+    sleep_sum = meas_mod.sleep_summary(sleep_rows)
+    _write_csv(out / f"{stem}_expiwell_item_measures.csv", items)
+    _write_csv(out / f"{stem}_expiwell_item_series.csv", series)
+    _write_csv(out / f"{stem}_expiwell_sleep_metrics.csv", sleep_rows)
+    result["measures"] = {"items": items, "sleep_summary": sleep_sum}
+
     if not args.no_report:
         try:
-            report_mod.build_report(out / f"{stem}_expiwell_report.pdf", result,
-                                    surveys, participant, args.season)
-        except Exception as exc:  # a failed plot must not lose the compliance result
+            report_mod.build_report(out / f"{stem}_expiwell_report.pdf", surveys,
+                                    items, series, sleep_rows, sleep_sum,
+                                    participant, args.season)
+        except Exception as exc:  # a failed plot must not lose the data outputs
             print(f"WARNING: report generation failed: {exc}", file=sys.stderr)
 
     s = result["summary"]
-    print(f"{stem}: {result['verdict']}  "
-          f"{s['overall_response_rate_pct']:.1f}% "
-          f"({s['total_completed']}/{s['total_expected']} prompts)")
+    print(f"{stem}: {len(items)} item measures from "
+          f"{s['total_completed']} responses"
+          + (f", {len(sleep_rows)} diary nights" if sleep_rows else ""))
+    for k in ("TST_hours_mean", "SOL_min_mean", "SE_pct_mean"):
+        if k in sleep_sum:
+            print(f"  sleep: {k.replace('_mean','')} = {sleep_sum[k]}")
     for note in result.get("notes", []):
         print(f"  note: {note}")
     if args.verbose:

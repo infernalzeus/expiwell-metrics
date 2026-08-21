@@ -96,6 +96,22 @@ def _to_int(value: str) -> Optional[int]:
         return None
 
 
+
+# The row-3 header carries, beyond the admin columns, each question's CHOICES
+# legend, e.g.  [ 1 = 'Not at all' 2 = 'Very little' ... 7 = 'Very much' ].
+# Answers are exported as the LABEL ("Very little"), so this legend is the only
+# way to recover the numeric coding needed to score an item.
+_CHOICE_RE = re.compile(r"(-?\d+)\s*=\s*'([^']*)'")
+
+
+def parse_choices(raw: str) -> list[dict[str, Any]]:
+    """[{'value': 1, 'label': 'Not at all'}, ...] from a Choices legend cell."""
+    if not raw:
+        return []
+    return [{"value": int(v), "label": lab.strip()}
+            for v, lab in _CHOICE_RE.findall(raw)]
+
+
 @dataclass
 class Response:
     """One completed survey response."""
@@ -143,7 +159,8 @@ class Survey:
     participant: str               # e.g. "CD011"
     path: Path
     description: str = ""
-    questions: list[dict[str, str]] = field(default_factory=list)  # column/text/type
+    # column / text / type / choices  (choices = the decoded Likert legend)
+    questions: list[dict[str, Any]] = field(default_factory=list)
     responses: list[Response] = field(default_factory=list)
 
     @property
@@ -157,6 +174,14 @@ class Survey:
     @property
     def occasions_present(self) -> list[int]:
         return sorted({r.occasion for r in self.responses if r.occasion is not None})
+
+    def value_map(self) -> dict[str, dict[str, int]]:
+        """{question column: {answer label: numeric value}} from the Choices legend."""
+        out: dict[str, dict[str, int]] = {}
+        for q in self.questions:
+            if q.get("choices"):
+                out[q["column"]] = {c["label"].casefold(): c["value"] for c in q["choices"]}
+        return out
 
     def window_signature(self) -> list[str]:
         """Distinct clock-time windows, e.g. ['06:00-11:00'].
@@ -231,11 +256,16 @@ def read_survey(path: Path) -> Survey:
             survey.description = (qtext[first_q] or "").replace("\xa0", " ").strip()
 
     for i in q_cols:
+        choices = parse_choices(header[i] if i < len(header) else "")
         survey.questions.append(
             {
                 "column": (label_row[i] or "").strip(),
-                "text": ((qtext[i] if i < len(qtext) else "") or "").replace("\xa0", " ").strip(),
+                "text": ((qtext[i] if i < len(qtext) else "") or "").replace(" ", " ").strip(),
                 "type": ((qtype[i] if i < len(qtype) else "") or "").strip(),
+                # The Likert legend from the row-3 header, and its numeric range.
+                "choices": choices,
+                "scale_min": min((c["value"] for c in choices), default=None),
+                "scale_max": max((c["value"] for c in choices), default=None),
             }
         )
 

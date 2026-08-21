@@ -77,11 +77,40 @@ def _response_rows(surveys) -> list[dict]:
                 "finished": r.finished,
             }
             qtext = {q["column"]: q["text"] for q in s.questions}
+            vmap = s.value_map()
             for col, val in r.answers.items():
                 if val == "":
                     continue
+                # Answers export as the choice LABEL; recover the numeric coding
+                # from the question's Choices legend so items can be scored.
+                value = vmap.get(col, {}).get(str(val).casefold(), "")
                 rows.append({**base, "question": col,
-                             "question_text": qtext.get(col, "")[:200], "answer": val})
+                             "question_text": qtext.get(col, "")[:200],
+                             "answer": val, "answer_value": value})
+    return rows
+
+
+def _question_rows(surveys) -> list[dict]:
+    """One row per survey question: wording, response type and the Likert legend.
+
+    Every ExpiWell export carries this instrument definition even when it has no
+    responses, so a survey that was deployed but unanswered is still documented.
+    """
+    rows = []
+    for s in surveys:
+        for q in s.questions:
+            choices = q.get("choices") or []
+            rows.append({
+                "participant": s.participant,
+                "survey": s.name,
+                "question": q.get("column", ""),
+                "question_text": q.get("text", ""),
+                "response_type": q.get("type", ""),
+                "scale_min": q.get("scale_min", ""),
+                "scale_max": q.get("scale_max", ""),
+                "n_choices": len(choices),
+                "choices": " | ".join(f"{c['value']}={c['label']}" for c in choices),
+            })
     return rows
 
 
@@ -157,6 +186,7 @@ def main(argv: list[str] | None = None) -> int:
     _write_csv(out / f"{stem}_daily_compliance.csv", comp_mod.daily_rows(result))
     _write_csv(out / f"{stem}_expiwell_metrics.csv", comp_mod.survey_rows(result))
     _write_csv(out / f"{stem}_expiwell_responses.csv", _response_rows(surveys))
+    _write_csv(out / f"{stem}_expiwell_questions.csv", _question_rows(surveys))
 
     if not args.no_report:
         try:

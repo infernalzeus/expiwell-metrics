@@ -161,6 +161,9 @@ def evaluate(surveys: list, schedule: Schedule, params: ComplianceParams) -> dic
     summary = {
         "verdict": verdict,
         "overall_response_rate_pct": round(overall, 2),
+        # Device-agnostic alias: the CHiP-D dashboard rolls every device up on
+        # `pct_compliance_mean`, so expose the response rate under that name too.
+        "pct_compliance_mean": round(overall, 2),
         "total_expected": total_expected,
         "total_completed": total_completed,
         "total_missed": max(0, total_expected - total_completed),

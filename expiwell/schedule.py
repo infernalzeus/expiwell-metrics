@@ -24,7 +24,9 @@ staging); adjust them per study rather than editing code.
 """
 from __future__ import annotations
 
+import difflib
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
@@ -52,6 +54,30 @@ DEFAULT_SURVEYS: dict[str, dict[str, Any]] = {
     },
     "Test-Notification": {"type": EXCLUDE, "prompts_per_day": 0, "scored": False},
 }
+
+
+
+# Survey filenames drift between seasons: "Sleep-Diary", "Sleep_Diary-S2",
+# "Affect-S3", even a typo'd "Test-NotifictionsS3_Visit". Canonicalising the name
+# (drop the season tag, unify separators) lets one schedule serve every season.
+# The tag appears at either end depending on the season:
+#   trailing  "Sleep_Diary-S2", "Test-NotifictionsS3_Visit"
+#   leading   "S4-Sleep_Diary"
+_SEASON_TAG = re.compile(r"[-_ ]*S\d+(?:[-_ ].*)?$", re.IGNORECASE)
+_SEASON_TAG_LEAD = re.compile(r"^S\d+[-_ ]+", re.IGNORECASE)
+
+
+def canonical_name(raw: str) -> str:
+    """'Sleep_Diary-S2' and 'S4-Sleep_Diary' both -> 'Sleep-Diary'."""
+    n = _SEASON_TAG_LEAD.sub("", (raw or "").strip())
+    n = _SEASON_TAG.sub("", n)
+    n = n.replace("_", "-").replace(" ", "-")
+    n = re.sub(r"-+", "-", n).strip("-")
+    return n
+
+
+def _key(name: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", canonical_name(name).lower())
 
 
 @dataclass
@@ -94,9 +120,21 @@ class Schedule:
     plans: dict[str, SurveyPlan] = field(default_factory=dict)
 
     def plan_for(self, survey_name: str) -> SurveyPlan:
-        """Plan for a survey; unknown surveys default to unscored daily."""
+        """Plan for a survey, matching across season/separator naming drift.
+
+        Tries the literal name, then the canonical form, then a close match (so a
+        typo like 'Test-Notifictions' still resolves). Unknown surveys fall back
+        to unscored so a new survey never silently changes a verdict.
+        """
         if survey_name in self.plans:
             return self.plans[survey_name]
+        wanted = _key(survey_name)
+        by_key = {_key(k): v for k, v in self.plans.items()}
+        if wanted in by_key:
+            return by_key[wanted]
+        close = difflib.get_close_matches(wanted, list(by_key), n=1, cutoff=0.85)
+        if close:
+            return by_key[close[0]]
         return SurveyPlan(
             name=survey_name, type=SIGNAL, prompts_per_day=1,
             expected_days=self.expected_days, scored=False,

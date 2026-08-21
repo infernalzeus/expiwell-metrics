@@ -52,7 +52,11 @@ ADMIN_COLUMNS = (
 
 # ExpiWell writes 12-hour timestamps, e.g. "09/28/2025 07:31AM".
 _TS_FORMATS = ("%m/%d/%Y %I:%M%p", "%m/%d/%Y %I:%M %p", "%m/%d/%Y %H:%M")
-_FILENAME_RE = re.compile(r"^(?P<pid>.+?)-Expiwell-Data-(?P<survey>.+)$", re.IGNORECASE)
+# Tolerates the separator drift seen across seasons: "CD011-Expiwell-Data-X",
+# "CD011- Expiwell-Data-X" (stray space), underscores, etc.
+_FILENAME_RE = re.compile(
+    r"^(?P<pid>.*?)[-_ ]*Expiwell[-_ ]*Data[-_ ]*(?P<survey>.+)$", re.IGNORECASE
+)
 
 
 def parse_timestamp(value: str) -> Optional[datetime]:
@@ -267,9 +271,17 @@ def read_folder(folder: Path) -> list[Survey]:
     extracted CSVs carry the same content plus the participant prefix.
     """
     folder = Path(folder)
-    surveys = [read_survey(p) for p in sorted(folder.glob("*-Expiwell-Data-*.csv"))]
+    seen: set[Path] = set()
+    surveys: list[Survey] = []
+    # Any CSV whose name mentions ExpiWell, however it is punctuated.
+    for p in sorted(folder.glob("*.csv")):
+        if "expiwell" in p.name.lower():
+            seen.add(p)
+            surveys.append(read_survey(p))
     if not surveys:  # fall back to any CSV that parses with the ExpiWell preamble
         for p in sorted(folder.glob("*.csv")):
+            if p in seen:
+                continue
             s = read_survey(p)
             if s.questions:
                 surveys.append(s)

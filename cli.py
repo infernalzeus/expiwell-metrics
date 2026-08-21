@@ -136,18 +136,24 @@ def main(argv: list[str] | None = None) -> int:
         min_plausible_duration_sec=args.min_duration,
     )
     result = comp_mod.evaluate(surveys, sched, params)
-    result["context"] = {
+    # Per-day rows live on the compliance object too, so the dashboard can read
+    # them without opening the CSV.
+    result["per_day"] = comp_mod.daily_rows(result)
+    context = {
         "participant": participant,
         "season": args.season,
         "input_folder": str(folder),
         "surveys_found": [s.name for s in surveys],
     }
+    result["context"] = context
+    # Same envelope as the other CHiP-D tools: {"context": ..., "compliance": ...}
+    envelope = {"context": context, "compliance": result}
 
     out = Path(args.output)
     out.mkdir(parents=True, exist_ok=True)
 
     comp_json = out / f"{stem}_compliance.json"
-    comp_json.write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
+    comp_json.write_text(json.dumps(envelope, indent=2, default=str), encoding="utf-8")
     _write_csv(out / f"{stem}_daily_compliance.csv", comp_mod.daily_rows(result))
     _write_csv(out / f"{stem}_expiwell_metrics.csv", comp_mod.survey_rows(result))
     _write_csv(out / f"{stem}_expiwell_responses.csv", _response_rows(surveys))

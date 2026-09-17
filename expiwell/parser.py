@@ -53,9 +53,10 @@ ADMIN_COLUMNS = (
 # ExpiWell writes 12-hour timestamps, e.g. "09/28/2025 07:31AM".
 _TS_FORMATS = ("%m/%d/%Y %I:%M%p", "%m/%d/%Y %I:%M %p", "%m/%d/%Y %H:%M")
 # Tolerates the separator drift seen across seasons: "CD011-Expiwell-Data-X",
-# "CD011- Expiwell-Data-X" (stray space), underscores, etc.
+# "CD011- Expiwell-Data-X" (stray space), underscores, and "CD025-Expiwell-X"
+# where "Data" was dropped.
 _FILENAME_RE = re.compile(
-    r"^(?P<pid>.*?)[-_ ]*Expiwell[-_ ]*Data[-_ ]*(?P<survey>.+)$", re.IGNORECASE
+    r"^(?P<pid>.*?)[-_ ]*Expiwell(?:[-_ ]*Data)?[-_ ]*(?P<survey>.+)$", re.IGNORECASE
 )
 
 

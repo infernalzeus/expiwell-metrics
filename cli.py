@@ -125,6 +125,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--stem", default=None,
                    help="Output filename stem (default: participant id from the CSVs)")
     p.add_argument("--season", default="", help="Season label, used in the report title")
+    p.add_argument("--participant", default=None,
+                   help="Participant ID, when the survey filenames don't carry one "
+                        "(exports that were never renamed, e.g. Affect.csv)")
     p.add_argument("--schedule", type=Path, default=None,
                    help="JSON file overriding the survey schedule / expected counts")
     p.add_argument("--expected-days", type=int, default=None,
@@ -151,7 +154,10 @@ def main(argv: list[str] | None = None) -> int:
     if not surveys:
         print(f"ERROR: no ExpiWell survey CSVs found in {folder}", file=sys.stderr)
         return 2
-    participant = parser_mod.participant_of(surveys, folder)
+    participant = args.participant or parser_mod.participant_of(surveys, folder)
+    for s in surveys:            # un-renamed files: stamp the known participant
+        if not s.participant:
+            s.participant = participant
     stem = args.stem or participant or folder.name
     if args.verbose:
         print(f"Participant: {participant}   surveys: {len(surveys)}")

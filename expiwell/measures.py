@@ -355,6 +355,10 @@ def affect_composites(surveys: list) -> list[dict[str, Any]]:
             rows.append({
                 "participant": s.participant, "survey": s.name,
                 "day": r.day, "occasion": r.occasion,
+                # Real response time: "day" is the survey's day of study, which
+                # is not a calendar count, so cross-device alignment uses these.
+                "timestamp": r.start.isoformat(sep=" ") if r.start else "",
+                "date": r.start.date().isoformat() if r.start else "",
                 "positive_affect": round(statistics.fmean(pos), 3) if pos else None,
                 "negative_affect": round(statistics.fmean(neg), 3) if neg else None,
                 "n_positive_items": len(pos), "n_negative_items": len(neg),
